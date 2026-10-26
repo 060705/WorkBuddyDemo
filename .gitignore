@@ -1,0 +1,10 @@
+/HELP.md
+/mvnw
+/mvnw.cmd
+/verify-replication.sh
+/--db
+/target/
+/.mvn/
+/.idea/
+/.gitattributes
+/src/main/resources/lua/stock_deduct.lua

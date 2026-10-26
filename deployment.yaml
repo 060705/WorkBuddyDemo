@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  labels:
+    app: demo
+spec:
+  replicas: 2                      # 副本数：维持 2 个 Pod
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+      - name: demo
+        image: demo:0.0.6        # 本地 docker build 的镜像；Docker Desktop 内置 K8s 共享同一镜像仓库
+        imagePullPolicy: IfNotPresent   # 关键：不向远程仓库拉取，直接使用本地构建的镜像
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: k8s             # 启用 application-k8s.yaml，连 master 的 Pod DNS
+        ports:
+        - containerPort: 8080      # 容器监听端口（Spring Boot 默认 8080）
+        readinessProbe:            # 就绪探针：没就绪则不接流量
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:             # 存活探针：失败则重启容器
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        resources:                 # 资源限制：防单 Pod 吃满节点
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi

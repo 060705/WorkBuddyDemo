@@ -1,0 +1,27 @@
+spring:
+  data:
+    redis:
+      # master 的稳定 Pod DNS（StatefulSet 保证名字不变）。
+      # 连 master 而非 Headless Service 名 redis：后者返回 3 个 Pod IP，
+      # Lettuce 只挑一个连，若落到从节点写会报 READONLY，且不同 Pod 连不同实例
+      # 会导致库存数据散落不一致。
+      # redis-0 是 master（StatefulSet 启动脚本按序号分配角色），redis-1/2 为只读从节点。
+      host: redis-0.redis.default.svc.cluster.local
+      port: 6379
+      password:
+  # ===== Kafka 连接配置（K8s 内）=====
+  # 前提：需先在 K8s 部署 Kafka（Strimzi Operator 或自建 StatefulSet），暴露 Service 名 kafka。
+  # 当前本地 demo 用 application.yaml（localhost:9092）；上 K8s 时切 profile=k8s 即走这里。
+  # 注意：Kafka 的 advertised.listeners 必须配成集群可路由的 Service DNS，否则 Pod 内连不上。
+  kafka:
+    bootstrap-servers: kafka.default.svc.cluster.local:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: 1
+    consumer:
+      group-id: demo-group
+      auto-offset-reset: earliest
+      enable-auto-commit: true
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer

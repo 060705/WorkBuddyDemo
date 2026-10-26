@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: demo
+  # ===== Redis 连接配置（本地默认）=====
+  # 默认连本地 master：docker-compose 起的 redis-master，宿主机映射端口 16379。
+  # （本机 6379 已被 Windows 服务 redis(native) 占用且有密码，故用 16379 避开冲突。）
+  # 本地手动调试（IDEA 直接 run / mvn spring-boot:run / java -jar）无需任何额外参数。
+  # 集群内联调用 profile=k8s（见 application-k8s.yaml），由 deployment.yaml 注入
+  # SPRING_PROFILES_ACTIVE=k8s，连 master 的 Pod DNS。
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 16379
+      password:                                # 本地 Redis 无密码，留空
+      timeout: 5000ms
+  # ===== Kafka 连接配置（本地默认）=====
+  # 本地 Docker 起的单节点 Kafka（KRaft 模式），宿主机映射端口 9092。
+  # 集群内联调用若 Kafka 也上 K8s（Strimzi），需切 profile=k8s 把 bootstrap-servers 改成
+  # Kafka Service DNS（如 kafka.default.svc.cluster.local:9092），与 Redis 的 k8s profile 同思路。
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: 1                       # 本地单副本，leader 落盘即算成功（生产建议 all + min.insync.replicas）
+    consumer:
+      group-id: demo-group
+      auto-offset-reset: earliest   # 新组从头读，便于演示"发过的历史也能消费到"
+      enable-auto-commit: true
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+server:
+  port: 8080
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  health:
+    redis:
+      enabled: true
