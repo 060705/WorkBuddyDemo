@@ -44,6 +44,26 @@ spring:
         api-key: ${DEEPSEEK_API_KEY:}
       chatanywhere:                                  # ChatAnywhere 聚合转发（一个 Key 接多家模型）
         api-key: ${CHATANYWHERE_API_KEY:}
+    # ===== MCP Client 配置：本应用作为 MCP Client，通过 stdio 拉起独立的 MCP Server 进程 =====
+    # 演示「客户端-服务端」完整协议闭环：client 拉起独立 server 进程，拿到它暴露的天气工具，
+    # 再注册进 ChatClient 供模型调用。
+    mcp:
+      client:
+        type: SYNC
+        request-timeout: 20s
+        stdio:
+          connections:
+            weather-mcp-server:        # 连接名（自定义）
+              command: java            # 启动独立 server 进程的命令
+              args:
+                - -Dfile.encoding=UTF-8   # 关键：强制 server 进程 UTF-8，否则中文城市名经 stdio 传输会乱码
+                - -Dhttp.proxyHost=${MCP_PROXY_HOST:127.0.0.1}   # 让独立 server 进程走代理访问外网（Clash）
+                - -Dhttp.proxyPort=${MCP_PROXY_PORT:7897}
+                - -Dhttps.proxyHost=${MCP_PROXY_HOST:127.0.0.1}
+                - -Dhttps.proxyPort=${MCP_PROXY_PORT:7897}
+                - -jar
+                - ${MCP_SERVER_JAR:target/demo-0.0.6-mcp-server.jar}   # 独立 server 的 jar（环境变量可覆盖）
+                - --spring.config.name=application-mcp-server   # 用 server 专属配置（含 stdio:true）
 server:
   port: 8080
 management:

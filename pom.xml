@@ -41,6 +41,18 @@
             <artifactId>spring-ai-starter-model-openai</artifactId>
             <version>1.0.0</version>
         </dependency>
+        <!-- MCP Client：连接 MCP Server，把远端的工具注册成本地可调用工具 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-client</artifactId>
+        </dependency>
+        <!-- MCP Server 依赖（用于独立 server 进程）：提供 @Tool 扫描 + stdio 传输自动配置。
+             注意：server 与 client 不能共存于同一进程（自动配置会互相触发连接导致死锁），
+             故 server 单独打包成独立 jar，本应用只保留 client 角色。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server</artifactId>
+        </dependency>
 
     </dependencies>
 
@@ -49,7 +61,7 @@
             <dependency>
                 <groupId>org.springframework.ai</groupId>
                 <artifactId>spring-ai-bom</artifactId>
-                <version>1.0.0</version>
+                <version>1.1.2</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -61,6 +73,23 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- 主应用 jar 的 main class 固定为 DemoApplication -->
+                    <mainClass>com.example.demo.DemoApplication</mainClass>
+                </configuration>
+                <executions>
+                    <!-- 第二次 repackage：产出独立的 MCP Server jar（main class 不同） -->
+                    <execution>
+                        <id>mcp-server</id>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                        <configuration>
+                            <classifier>mcp-server</classifier>
+                            <mainClass>com.example.demo.mcpserver.McpServerApplication</mainClass>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

@@ -1,0 +1,21 @@
+# 独立 MCP Server 进程专用配置（McpServerApplication 使用）
+# 通过 --spring.config.name=application-mcp-server 加载。
+spring:
+  application:
+    name: workbuddy-demo-mcp-server
+  main:
+    banner-mode: off            # 关键：禁用启动 banner（banner 走 stdout 会污染 stdio JSON 协议流）
+    web-application-type: none  # stdio server 不需要 Web 容器，纯命令行进程
+  ai:
+    mcp:
+      server:
+        enabled: true
+        name: weather-mcp-server          # MCP Server 名字（client 侧识别用）
+        version: 1.0.0
+        type: SYNC                        # 同步工具：@McpTool 方法直接执行并返回结果
+        stdio: true                       # 关键：启用 stdio 传输（监听标准输入输出，供独立进程通信）
+
+# 日志走 stderr（logback 配置强制 console appender 输出到 System.err），
+# 避免污染 stdout 的 JSON-RPC 协议流。
+logging:
+  config: classpath:logback-mcp-server.xml

@@ -327,4 +327,55 @@ public class AgentController {
                         "apiKeyEnv", p.getApiKeyEnv() == null ? "(无需 Key)" : p.getApiKeyEnv()))
                 .toList();
     }
+
+    /**
+     * MCP 演示：通过 MCP 协议调用「外部工具」（天气查询）的流式接口。
+     * GET /ai/mcp?message=合肥今天天气怎么样
+     *
+     * <p>与 /ai/stream 的区别：这里刻意<b>只</b>依赖 MCP 工具（不传 timeTool/knowledgeBaseTool），
+     * 用于证明「天气」这个能力是经由 MCP Server → MCP Client 协议链路拿到的，而非进程内方法。
+     * 模型会在需要时自动发起 tools/call，调用远端的 WeatherMcpTool。
+     */
+    @GetMapping(value = "/mcp", produces = MediaType.TEXT_EVENT_STREAM_VALUE + ";charset=UTF-8")
+    public SseEmitter mcp(@RequestParam(required = false) String modelId,
+                          @RequestParam String message) {
+        AiModel model = resolveModel(modelId);
+        ChatClient client = factory.get(model.getId());
+
+        SseEmitter emitter = new SseEmitter(180_000L);
+        send(emitter, "meta", model.getId() + " | " + model.getProvider().getDisplayName()
+                + " | " + model.getModelName() + " | 仅 MCP 工具");
+
+        Flux<String> flux = client.prompt()
+                .user(message)
+                // 不传进程内工具：只靠 factory 里 defaultTools 注册的 MCP 工具
+                .stream()
+                .content();
+
+        flux.subscribeOn(Schedulers.boundedElastic())
+                .subscribe(
+                        chunk -> send(emitter, "chunk", chunk),
+                        err -> {
+                            log.error("[AI] MCP 演示失败, model={}", model.getId(), err);
+                            send(emitter, "error", String.valueOf(err.getMessage()));
+                            emitter.completeWithError(err);
+                        },
+                        () -> { send(emitter, "done", "[DONE]"); emitter.complete(); }
+                );
+        emitter.onTimeout(emitter::complete);
+        return emitter;
+    }
+
+    /**
+     * 列出当前 MCP Client 已接入的工具（即 MCP Server 暴露的天气工具）。
+     * GET /ai/mcp/tools
+     */
+    @GetMapping("/mcp/tools")
+    public Map<String, Object> mcpTools() {
+        var tools = factory.getMcpToolNames();
+        return Map.of(
+                "count", tools.size(),
+                "tools", tools
+        );
+    }
 }
