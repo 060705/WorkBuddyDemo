@@ -3,16 +3,20 @@ package com.example.demo;
 import com.example.demo.ai.AiChatClientFactory;
 import com.example.demo.ai.AiModel;
 import com.example.demo.ai.AiProvider;
+import com.example.demo.rag.KnowledgeBaseTool;
+import com.example.demo.rag.VectorStoreService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Schedulers;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -38,10 +42,13 @@ public class AgentController {
 
     private final AiChatClientFactory factory;
     private final TimeTool timeTool;
+    private final KnowledgeBaseTool knowledgeBaseTool;
 
-    public AgentController(AiChatClientFactory factory, TimeTool timeTool) {
+    public AgentController(AiChatClientFactory factory, TimeTool timeTool,
+                           KnowledgeBaseTool knowledgeBaseTool) {
         this.factory = factory;
         this.timeTool = timeTool;
+        this.knowledgeBaseTool = knowledgeBaseTool;
     }
 
     /** 列出所有可用模型：先看这个拿 id，再调 /ai/stream */
@@ -83,7 +90,7 @@ public class AgentController {
 
         Flux<String> flux = client.prompt()
                 .user(message)
-                .tools(timeTool)      // 让模型按需自动调用工具
+                .tools(timeTool, knowledgeBaseTool)   // 模型可自动查时间 + 查知识库
                 .stream()
                 .content();
 
@@ -117,7 +124,7 @@ public class AgentController {
         long start = System.currentTimeMillis();
         String content = client.prompt()
                 .user(message)
-                .tools(timeTool)
+                .tools(timeTool, knowledgeBaseTool)
                 .call()
                 .content();
         return Map.of(
@@ -158,6 +165,99 @@ public class AgentController {
     public Map<String, Object> handleBadRequest(RuntimeException e) {
         log.warn("[AI] 请求参数或配置错误: {}", e.getMessage());
         return Map.of("error", String.valueOf(e.getMessage()));
+    }
+
+    /**
+     * RAG 知识库问答（流式）：GET /ai/rag?question=xxx
+     *
+     * <p>与 /ai/stream 的区别：会在回答末尾额外标注「参考了哪几个片段」，
+     * 让你直观看到「检索 → 生成」的证据链，而不只是模型空口回答。
+     */
+    @GetMapping(value = "/rag", produces = MediaType.TEXT_EVENT_STREAM_VALUE + ";charset=UTF-8")
+    public SseEmitter rag(@RequestParam(required = false) String modelId,
+                          @RequestParam String question) {
+        AiModel model = resolveModel(modelId);
+        ChatClient client = factory.get(model.getId());
+
+        // 先本地检索，把命中的片段也发出去（放在回答前的 sources 事件里）
+        List<VectorStoreService.Hit> hits = knowledgeBaseTool.getStore().search(question, 5);
+
+        SseEmitter emitter = new SseEmitter(180_000L);
+        send(emitter, "meta", model.getId() + " | " + model.getProvider().getDisplayName() + " | " + model.getModelName());
+
+        // 发检索到的参考片段（sources 事件，前端可显示成「参考资料」）
+        StringBuilder refs = new StringBuilder();
+        for (int i = 0; i < hits.size(); i++) {
+            VectorStoreService.Hit h = hits.get(i);
+            refs.append("[").append(i + 1).append("] ")
+                 .append(h.chunk.source).append("（相关度 ").append(String.format("%.2f", h.score)).append("）\n")
+                 .append(h.chunk.text).append("\n\n");
+        }
+        send(emitter, "sources", refs.toString());
+
+        // 组装带上下文的提示词，让模型「只照着资料答，没资料就明说不知道」
+        String system = "你是鼎校教育内部知识助手。请严格依据下面【参考资料】回答用户问题；"
+                + "资料里没有的信息，直接说「资料里没有提到」，不要编造。回答末尾用一行列出你引用的出处。\n\n"
+                + "【参考资料】\n" + (refs.length() > 0 ? refs : "（无）");
+
+        Flux<String> flux = client.prompt()
+                .system(system)
+                .user(question)
+                .stream()
+                .content();
+
+        flux.subscribeOn(Schedulers.boundedElastic())
+                .subscribe(
+                        chunk -> send(emitter, "chunk", chunk),
+                        err -> {
+                            log.error("[AI] RAG 流式生成失败, model={}", model.getId(), err);
+                            send(emitter, "error", String.valueOf(err.getMessage()));
+                            emitter.completeWithError(err);
+                        },
+                        () -> { send(emitter, "done", "[DONE]"); emitter.complete(); }
+                );
+        emitter.onTimeout(emitter::complete);
+        return emitter;
+    }
+
+    /** 知识库状态：看当前库里有多少片段（用于确认 seeder 是否加载成功） */
+    @GetMapping("/kb")
+    public Map<String, Object> kb() {
+        return Map.of(
+                "chunks", knowledgeBaseTool.getStore().size(),
+                "sources", knowledgeBaseTool.getStore().listSources()
+        );
+    }
+
+    /**
+     * 上传 Markdown 文档到知识库：POST /ai/kb/upload
+     *
+     * <p>支持两种传参：
+     * <ul>
+     *   <li>multipart 表单：字段名 file（MultipartFile），文件名作为来源</li>
+     *   <li>JSON：{"name":"文档标题","content":"markdown 正文"}</li>
+     * </ul>
+     * 上传后自动 rebuild 索引，立即可用于 /ai/rag 咨询。
+     */
+    @PostMapping(value = "/kb/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Map<String, Object> upload(@RequestParam("file") MultipartFile file) {
+        String name = file.getOriginalFilename();
+        if (name == null) name = "未命名文档";
+        // 去掉扩展名作为来源名
+        String source = name.replaceAll("\\.(md|markdown|txt)$", "");
+        String content;
+        try {
+            content = new String(file.getBytes(), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("读取文件失败: " + e.getMessage());
+        }
+        int added = knowledgeBaseTool.getStore().addDocument(source, content);
+        knowledgeBaseTool.getStore().build();
+        return Map.of(
+                "source", source,
+                "addedChunks", added,
+                "totalChunks", knowledgeBaseTool.getStore().size()
+        );
     }
 
     /** 供应商一览（方便确认端点/环境变量名） */

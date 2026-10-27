@@ -18,6 +18,17 @@
         }
         h1 { font-size: 20px; color: #4a3f8c; margin-bottom: 4px; }
         .sub { font-size: 12px; color: #999; margin-bottom: 18px; }
+        .tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+        .tab { flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 8px;
+            background: #f5f4fb; cursor: pointer; text-align: center; font-size: 14px; font-weight: 600; color: #666; }
+        .tab.active { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; border-color: transparent; }
+        .panel { display: none; }
+        .panel.active { display: block; }
+        .refs { font-size: 12px; color: #888; background: #faf9fd; border-left: 3px solid #764ba2;
+            padding: 10px; border-radius: 6px; margin-bottom: 12px; white-space: pre-wrap; max-height: 180px; overflow-y: auto; }
+        .upload-row { display: flex; gap: 10px; align-items: center; }
+        .upload-btn { margin-top: 0; width: auto; padding: 10px 18px; flex-shrink: 0; }
+        .upload-msg { font-size: 12px; color: #764ba2; margin-top: 6px; min-height: 16px; }
         label { font-size: 13px; font-weight: 600; color: #555; display: block; margin: 12px 0 6px; }
         select, textarea {
             width: 100%; border: 1px solid #ddd; border-radius: 8px;
@@ -56,17 +67,42 @@
         <h1>🤖 AI Agent · 多模型多供应商流式演示</h1>
         <div class="sub">Spring AI + SSE · 选模型 → 输入问题 → 逐字流式输出</div>
 
-        <label>选择模型（modelId）</label>
-        <select id="model"></select>
+        <div class="tabs">
+            <div class="tab active" data-panel="chat">💬 普通对话</div>
+            <div class="tab" data-panel="rag">📚 知识库问答（RAG）</div>
+        </div>
 
-        <label>你的问题</label>
-        <textarea id="q" placeholder="例如：现在几点了？帮我用一句话介绍什么是 RAG"></textarea>
+        <div class="panel active" id="panel-chat">
+            <label>选择模型（modelId）</label>
+            <select id="model"></select>
 
-        <button class="btn" id="send">发送（流式生成）</button>
+            <label>你的问题</label>
+            <textarea id="q" placeholder="例如：现在几点了？帮我用一句话介绍什么是 RAG"></textarea>
+
+            <button class="btn" id="send">发送（流式生成）</button>
+        </div>
+
+        <div class="panel" id="panel-rag">
+            <label>选择模型（modelId）</label>
+            <select id="ragModel"></select>
+
+            <label>上传 Markdown 文档（追加到知识库）</label>
+            <div class="upload-row">
+                <input type="file" id="mdFile" accept=".md,.markdown,.txt" style="border:none;padding:0;font-size:13px;">
+                <button class="btn upload-btn" id="uploadBtn">上传入库</button>
+            </div>
+            <div class="upload-msg" id="uploadMsg"></div>
+
+            <label>知识库问题（私有文档）</label>
+            <textarea id="rq" placeholder="例如：家长和学生是怎么关联的？OSS 上传的 bucket 叫什么？"></textarea>
+
+            <button class="btn" id="ragSend">发送（先检索 → 再生成）</button>
+        </div>
     </div>
 
     <div class="card">
         <span class="meta" id="meta"></span>
+        <div class="refs" id="refs" style="display:none"></div>
         <div id="out"><span class="placeholder">回答会在这里逐字流式出现…</span></div>
         <div class="tip">工具调用演示：问「现在几点」模型会自动调用后端 TimeTool 返回真实时间</div>
     </div>
@@ -74,20 +110,40 @@
 
 <script>
     const modelSel = document.getElementById('model');
+    const ragModelSel = document.getElementById('ragModel');
     const qEl = document.getElementById('q');
+    const rqEl = document.getElementById('rq');
     const outEl = document.getElementById('out');
     const metaEl = document.getElementById('meta');
+    const refsEl = document.getElementById('refs');
     const sendBtn = document.getElementById('send');
+    const ragSendBtn = document.getElementById('ragSend');
+    const mdFile = document.getElementById('mdFile');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const uploadMsg = document.getElementById('uploadMsg');
     let es = null;
+    let contentRef = '';  // 流式累加缓冲
 
-    // 加载模型清单
+    // 加载模型清单（两个下拉共用同一份数据）
     fetch('/ai/models').then(r => r.json()).then(d => {
         d.models.forEach(m => {
-            const o = document.createElement('option');
-            o.value = m.id;
-            o.textContent = `${m.id}（${m.model} · ${m.provider}）`;
-            if (m.default) o.selected = true;
-            modelSel.appendChild(o);
+            [modelSel, ragModelSel].forEach(sel => {
+                const o = document.createElement('option');
+                o.value = m.id;
+                o.textContent = `${m.id}（${m.model} · ${m.provider}）`;
+                if (m.default) o.selected = true;
+                sel.appendChild(o);
+            });
+        });
+    });
+
+    // 标签页切换
+    document.querySelectorAll('.tab').forEach(t => {
+        t.addEventListener('click', () => {
+            document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+            document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+            t.classList.add('active');
+            document.getElementById('panel-' + t.dataset.panel).classList.add('active');
         });
     });
 
@@ -104,42 +160,98 @@
         outEl.innerHTML = md(text) + (streaming ? '<span class="cursor"></span>' : '');
     }
 
+    function reset() {
+        if (es) es.close();
+        contentRef = '';
+        metaEl.classList.remove('show');
+        refsEl.style.display = 'none';
+        refsEl.textContent = '';
+        setContent('', true);
+    }
+
     function ask() {
         const message = qEl.value.trim();
         if (!message) { qEl.focus(); return; }
-        if (es) es.close();
-
+        reset();
         sendBtn.disabled = true;
-        metaEl.classList.remove('show');
-        let content = '';
-        setContent('', true);
 
         const url = '/ai/stream?modelId=' + encodeURIComponent(modelSel.value)
                   + '&message=' + encodeURIComponent(message);
         es = new EventSource(url);
+        bindEvents(es, () => { sendBtn.disabled = false; }, () => { sendBtn.disabled = false; });
+    }
 
-        es.addEventListener('meta', e => {
+    function askRag() {
+        const question = rqEl.value.trim();
+        if (!question) { rqEl.focus(); return; }
+        reset();
+        ragSendBtn.disabled = true;
+
+        const url = '/ai/rag?modelId=' + encodeURIComponent(ragModelSel.value)
+                  + '&question=' + encodeURIComponent(question);
+        es = new EventSource(url);
+        bindEvents(es, () => { ragSendBtn.disabled = false; }, () => { ragSendBtn.disabled = false; });
+    }
+
+    // 统一绑定 SSE 事件（chat 与 rag 共用）
+    function bindEvents(esObj, onDone, onError) {
+        esObj.addEventListener('meta', e => {
             metaEl.textContent = '⚙️ ' + e.data;
             metaEl.classList.add('show');
         });
-        es.addEventListener('chunk', e => {
-            content += e.data;
-            setContent(content, true);
+        esObj.addEventListener('sources', e => {
+            if (e.data && e.data.trim()) {
+                refsEl.textContent = '📄 检索到的参考资料：\n' + e.data;
+                refsEl.style.display = 'block';
+            }
         });
-        es.addEventListener('done', () => {
-            setContent(content, false);
-            es.close(); sendBtn.disabled = false;
+        esObj.addEventListener('chunk', e => {
+            contentRef += e.data;
+            setContent(contentRef, true);
         });
-        es.addEventListener('error', e => {
-            setContent(content + '\n[错误] ' + (e.data || '连接中断'), false);
-            es.close(); sendBtn.disabled = false;
+        esObj.addEventListener('done', () => {
+            setContent(contentRef, false);
+            esObj.close(); onDone();
         });
-        es.onerror = () => { es.close(); sendBtn.disabled = false; };
+        esObj.addEventListener('error', e => {
+            setContent(contentRef + '\n[错误] ' + (e.data || '连接中断'), false);
+            esObj.close(); onError();
+        });
+        esObj.onerror = () => { esObj.close(); onError(); };
+    }
+
+    // 上传 Markdown 文件到知识库
+    async function uploadMd() {
+        const f = mdFile.files[0];
+        if (!f) { uploadMsg.textContent = '请先选择一个 .md 文件'; return; }
+        uploadBtn.disabled = true;
+        uploadMsg.textContent = '上传中…';
+        const fd = new FormData();
+        fd.append('file', f);
+        try {
+            const r = await fetch('/ai/kb/upload', { method: 'POST', body: fd });
+            const d = await r.json();
+            if (r.ok) {
+                uploadMsg.textContent = `✅ 已入库「${d.source}」：新增 ${d.addedChunks} 段，库内共 ${d.totalChunks} 段`;
+                mdFile.value = '';
+            } else {
+                uploadMsg.textContent = '❌ ' + (d.error || '上传失败');
+            }
+        } catch (e) {
+            uploadMsg.textContent = '❌ ' + e.message;
+        } finally {
+            uploadBtn.disabled = false;
+        }
     }
 
     sendBtn.addEventListener('click', ask);
+    ragSendBtn.addEventListener('click', askRag);
+    uploadBtn.addEventListener('click', uploadMd);
     qEl.addEventListener('keydown', e => {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) ask();
+    });
+    rqEl.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) askRag();
     });
 </script>
 </body>
