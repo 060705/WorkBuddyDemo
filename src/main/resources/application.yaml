@@ -29,6 +29,23 @@ spring:
       enable-auto-commit: true
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+  # ===== AI / LLM 多供应商多模型配置 =====
+  # 供应商与模型定义在 ai/AiProvider.java、ai/AiModel.java，这里只配「端点 + 密钥」。
+  # 端点不能带 /v1：Spring AI 会自动拼 /v1/chat/completions（带了会拼成 /v1/v1/ 404）。
+  # 密钥优先读这里，读不到再回落环境变量；不写死真实 Key，只写 ${ENV_VAR}。
+  ai:
+    providers:
+      sensenova:                                     # 商汤 SenseNova Token Plan（免费 500 次/5h）
+        # base-url: https://token.sensenova.cn        # 枚举已有默认，需要覆盖才写
+        api-key: ${SENSENOVA_API_KEY:}
+      dashscope:                                     # 阿里通义千问
+        api-key: ${DASHSCOPE_API_KEY:${QWEN_API_KEY:}}
+      deepseek:                                      # DeepSeek 官方
+        api-key: ${DEEPSEEK_API_KEY:}
+      openai:                                        # OpenAI 官方
+        api-key: ${OPENAI_API_KEY:}
+      ollama:                                        # 本地 Ollama，无需 Key
+        base-url: http://localhost:11434
 server:
   port: 8080
 management:

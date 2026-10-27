@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0">
+  <!-- 项目级 settings：不配置 alimaven 镜像，让 Spring AI 等依赖直接从 Maven Central 解析
+       （Aliyun 镜像未同步 Spring AI 的新坐标）。用 mvnw -s settings.xml 调用。 -->
+  <localRepository>${user.home}/.m2/repository</localRepository>
+</settings>
