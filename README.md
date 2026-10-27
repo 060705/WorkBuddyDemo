@@ -12,14 +12,28 @@
 
 ## 快速开始
 
-```bash
-# 设置 API Key（至少一个供应商）
-export SENSENOVA_API_KEY=sk-xxx
-export CHATANYWHERE_API_KEY=sk-xxx
+API Key 已写死在 `src/main/resources/application.yaml`，无需环境变量，开箱即用。
 
-# 启动主应用（默认端口 8089）
-./mvnw spring-boot:run
+### 一键启动 / 停止（Windows）
+
+```bash
+scripts\start.bat          # 启动主应用（默认端口 8089，可传参覆盖如 start.bat 8080）
+scripts\stop.bat           # 停止主应用 + MCP Server
 ```
+
+`start.bat` 会在 jar 不存在时自动先打包；主应用启动后会自动通过 stdio 拉起独立的 MCP Server 子进程，无需单独启动。
+
+### 手动启动（命令行）
+
+```bash
+# 首次需先打包（改动过代码/配置后也需重新打包）
+mvn -s settings.xml clean package -DskipTests
+
+# 启动主应用（自动拉起 MCP Server）
+java -jar target/demo-0.0.6.jar --server.port=8089
+```
+
+> 注意：MCP 天气查询依赖 Clash 代理（127.0.0.1:7897），未开 Clash 时 `/ai/mcp` 会超时，其余功能（普通对话 / RAG / 知识库）不受影响。
 
 ## 核心接口（全部 GET，浏览器可直接访问）
 

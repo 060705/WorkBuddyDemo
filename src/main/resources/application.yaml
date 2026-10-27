@@ -37,13 +37,13 @@ spring:
     providers:
       sensenova:                                     # 商汤 SenseNova Token Plan（免费 500 次/5h）
         # base-url: https://token.sensenova.cn        # 枚举已有默认，需要覆盖才写
-        api-key: ${SENSENOVA_API_KEY:}
+        api-key: sk-HkFohYWxhMSAwKhAtuB6AkMnHsWQz5uA
       dashscope:                                     # 阿里通义千问
         api-key: ${DASHSCOPE_API_KEY:${QWEN_API_KEY:}}
       deepseek:                                      # DeepSeek 官方
         api-key: ${DEEPSEEK_API_KEY:}
       chatanywhere:                                  # ChatAnywhere 聚合转发（一个 Key 接多家模型）
-        api-key: ${CHATANYWHERE_API_KEY:}
+        api-key: sk-bWTRxnW7FraadxgfgQE3pwj9FjYPsR6q0qY3X4MSJOPRJRFq
     # ===== MCP Client 配置：本应用作为 MCP Client，通过 stdio 拉起独立的 MCP Server 进程 =====
     # 演示「客户端-服务端」完整协议闭环：client 拉起独立 server 进程，拿到它暴露的天气工具，
     # 再注册进 ChatClient 供模型调用。
