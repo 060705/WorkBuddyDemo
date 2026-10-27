@@ -29,6 +29,8 @@
         .upload-row { display: flex; gap: 10px; align-items: center; }
         .upload-btn { margin-top: 0; width: auto; padding: 10px 18px; flex-shrink: 0; }
         .upload-msg { font-size: 12px; color: #764ba2; margin-top: 6px; min-height: 16px; }
+        .tabs { align-items: center; }
+        .new-chat-btn { margin: 0 0 0 auto; width: auto; padding: 8px 14px; font-size: 13px; flex-shrink: 0; }
         label { font-size: 13px; font-weight: 600; color: #555; display: block; margin: 12px 0 6px; }
         select, textarea {
             width: 100%; border: 1px solid #ddd; border-radius: 8px;
@@ -65,11 +67,12 @@
 <div class="wrap">
     <div class="card">
         <h1>🤖 AI Agent · 多模型多供应商流式演示</h1>
-        <div class="sub">Spring AI + SSE · 选模型 → 输入问题 → 逐字流式输出</div>
+        <div class="sub">Spring AI + SSE · 选模型 → 输入问题 → 逐字流式输出 · 多轮记忆已开启</div>
 
         <div class="tabs">
             <div class="tab active" data-panel="chat">💬 普通对话</div>
             <div class="tab" data-panel="rag">📚 知识库问答（RAG）</div>
+            <button class="btn new-chat-btn" id="newChat" title="清空当前会话记忆，开始新对话">🆕 新会话</button>
         </div>
 
         <div class="panel active" id="panel-chat">
@@ -121,8 +124,11 @@
     const mdFile = document.getElementById('mdFile');
     const uploadBtn = document.getElementById('uploadBtn');
     const uploadMsg = document.getElementById('uploadMsg');
+    const newChatBtn = document.getElementById('newChat');
     let es = null;
     let contentRef = '';  // 流式累加缓冲
+    // 会话 id：同一页面内保持，让多轮对话能连贯（多轮记忆）
+    let sessionId = 'web-' + Math.random().toString(36).slice(2, 10);
 
     // 加载模型清单（两个下拉共用同一份数据）
     fetch('/ai/models').then(r => r.json()).then(d => {
@@ -176,7 +182,8 @@
         sendBtn.disabled = true;
 
         const url = '/ai/stream?modelId=' + encodeURIComponent(modelSel.value)
-                  + '&message=' + encodeURIComponent(message);
+                  + '&message=' + encodeURIComponent(message)
+                  + '&sessionId=' + encodeURIComponent(sessionId);
         es = new EventSource(url);
         bindEvents(es, () => { sendBtn.disabled = false; }, () => { sendBtn.disabled = false; });
     }
@@ -188,7 +195,8 @@
         ragSendBtn.disabled = true;
 
         const url = '/ai/rag?modelId=' + encodeURIComponent(ragModelSel.value)
-                  + '&question=' + encodeURIComponent(question);
+                  + '&question=' + encodeURIComponent(question)
+                  + '&sessionId=' + encodeURIComponent(sessionId);
         es = new EventSource(url);
         bindEvents(es, () => { ragSendBtn.disabled = false; }, () => { ragSendBtn.disabled = false; });
     }
@@ -247,6 +255,16 @@
     sendBtn.addEventListener('click', ask);
     ragSendBtn.addEventListener('click', askRag);
     uploadBtn.addEventListener('click', uploadMd);
+
+    // 新会话：清空后端记忆 + 换新 sessionId + 清空输入输出
+    newChatBtn.addEventListener('click', () => {
+        fetch('/ai/memory/clear?sessionId=' + encodeURIComponent(sessionId));
+        sessionId = 'web-' + Math.random().toString(36).slice(2, 10);
+        qEl.value = ''; rqEl.value = '';
+        reset();
+        setContent('', false);
+        outEl.innerHTML = '<span class="placeholder">新会话已开始，回答会在这里逐字流式出现…</span>';
+    });
     qEl.addEventListener('keydown', e => {
         if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) ask();
     });

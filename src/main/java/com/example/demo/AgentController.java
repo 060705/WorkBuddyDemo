@@ -3,11 +3,14 @@ package com.example.demo;
 import com.example.demo.ai.AiChatClientFactory;
 import com.example.demo.ai.AiModel;
 import com.example.demo.ai.AiProvider;
+import com.example.demo.agent.ToolTrace;
+import com.example.demo.memory.ChatMemoryService;
 import com.example.demo.rag.KnowledgeBaseTool;
 import com.example.demo.rag.VectorStoreService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.Message;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
@@ -43,12 +46,17 @@ public class AgentController {
     private final AiChatClientFactory factory;
     private final TimeTool timeTool;
     private final KnowledgeBaseTool knowledgeBaseTool;
+    private final ChatMemoryService memory;
+    private final ToolTrace trace;
 
     public AgentController(AiChatClientFactory factory, TimeTool timeTool,
-                           KnowledgeBaseTool knowledgeBaseTool) {
+                           KnowledgeBaseTool knowledgeBaseTool, ChatMemoryService memory,
+                           ToolTrace trace) {
         this.factory = factory;
         this.timeTool = timeTool;
         this.knowledgeBaseTool = knowledgeBaseTool;
+        this.memory = memory;
+        this.trace = trace;
     }
 
     /** 列出所有可用模型：先看这个拿 id，再调 /ai/stream */
@@ -79,30 +87,44 @@ public class AgentController {
     // produces 显式带 charset=UTF-8，让浏览器/curl 用 UTF-8 解析中文（配合 WebConfig 里的转换器）
     @GetMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE + ";charset=UTF-8")
     public SseEmitter stream(@RequestParam(required = false) String modelId,
-                             @RequestParam String message) {
+                             @RequestParam String message,
+                             @RequestParam(required = false) String sessionId) {
         AiModel model = resolveModel(modelId);
         ChatClient client = factory.get(model.getId());
 
         // 3 分钟超时：推理模型（如 deepseek-reasoner）会想很久
         SseEmitter emitter = new SseEmitter(180_000L);
 
-        send(emitter, "meta", model.getId() + " | " + model.getProvider().getDisplayName() + " | " + model.getModelName());
+        send(emitter, "meta", model.getId() + " | " + model.getProvider().getDisplayName() + " | "
+                + model.getModelName() + " | " + memory.describe(sessionId));
+
+        // 多轮记忆：把历史消息塞回 prompt（模型无状态，靠我们替它复习）
+        List<Message> history = memory.getHistory(sessionId);
+
+        // 用 StringBuilder 累积流式内容，结束后存入记忆
+        StringBuilder answer = new StringBuilder();
 
         Flux<String> flux = client.prompt()
-                .user(message)
+                .messages(history)   // 先放历史
+                .user(message)        // 再放本轮问题
                 .tools(timeTool, knowledgeBaseTool)   // 模型可自动查时间 + 查知识库
                 .stream()
                 .content();
 
         flux.subscribeOn(Schedulers.boundedElastic())
                 .subscribe(
-                        chunk -> send(emitter, "chunk", chunk),
+                        chunk -> {
+                            answer.append(chunk);
+                            send(emitter, "chunk", chunk);
+                        },
                         err -> {
                             log.error("[AI] 流式生成失败, model={}", model.getId(), err);
                             send(emitter, "error", String.valueOf(err.getMessage()));
                             emitter.completeWithError(err);
                         },
                         () -> {
+                            // 生成完毕：把本轮问答存入会话记忆
+                            memory.append(sessionId, message, answer.toString());
                             send(emitter, "done", "[DONE]");
                             emitter.complete();
                         }
@@ -118,15 +140,19 @@ public class AgentController {
      */
     @GetMapping("/chat")
     public Map<String, Object> chat(@RequestParam(required = false) String modelId,
-                                    @RequestParam String message) {
+                                    @RequestParam String message,
+                                    @RequestParam(required = false) String sessionId) {
         AiModel model = resolveModel(modelId);
         ChatClient client = factory.get(model.getId());
         long start = System.currentTimeMillis();
+        List<Message> history = memory.getHistory(sessionId);
         String content = client.prompt()
+                .messages(history)
                 .user(message)
                 .tools(timeTool, knowledgeBaseTool)
                 .call()
                 .content();
+        memory.append(sessionId, message, content == null ? "" : content);
         return Map.of(
                 "modelId", model.getId(),
                 "provider", model.getProvider().getCode(),
@@ -135,6 +161,22 @@ public class AgentController {
                 "content", content == null ? "" : content,
                 "costMs", System.currentTimeMillis() - start
         );
+    }
+
+    /** 清空指定会话的记忆（用户主动「新会话」时调用） */
+    @GetMapping("/memory/clear")
+    public Map<String, Object> clearMemory(@RequestParam(required = false) String sessionId) {
+        memory.clear(sessionId);
+        return Map.of("cleared", true, "sessions", memory.sessionCount());
+    }
+
+    /**
+     * Agent 工具调用轨迹：观察模型「思考-行动」的编排过程。
+     * GET /ai/trace?n=10  返回最近 n 次工具调用（倒序）
+     */
+    @GetMapping("/trace")
+    public Map<String, Object> trace(@RequestParam(defaultValue = "10") int n) {
+        return Map.of("entries", trace.recentAsMaps(n));
     }
 
     /** 解析模型 id：为空用默认，非法 id 直接 400 并回传可用列表 */
@@ -175,7 +217,8 @@ public class AgentController {
      */
     @GetMapping(value = "/rag", produces = MediaType.TEXT_EVENT_STREAM_VALUE + ";charset=UTF-8")
     public SseEmitter rag(@RequestParam(required = false) String modelId,
-                          @RequestParam String question) {
+                          @RequestParam String question,
+                          @RequestParam(required = false) String sessionId) {
         AiModel model = resolveModel(modelId);
         ChatClient client = factory.get(model.getId());
 
@@ -183,7 +226,8 @@ public class AgentController {
         List<VectorStoreService.Hit> hits = knowledgeBaseTool.getStore().search(question, 5);
 
         SseEmitter emitter = new SseEmitter(180_000L);
-        send(emitter, "meta", model.getId() + " | " + model.getProvider().getDisplayName() + " | " + model.getModelName());
+        send(emitter, "meta", model.getId() + " | " + model.getProvider().getDisplayName() + " | "
+                + model.getModelName() + " | " + memory.describe(sessionId));
 
         // 发检索到的参考片段（sources 事件，前端可显示成「参考资料」）
         StringBuilder refs = new StringBuilder();
@@ -200,21 +244,33 @@ public class AgentController {
                 + "资料里没有的信息，直接说「资料里没有提到」，不要编造。回答末尾用一行列出你引用的出处。\n\n"
                 + "【参考资料】\n" + (refs.length() > 0 ? refs : "（无）");
 
+        // 多轮记忆：历史消息塞回 prompt
+        List<Message> history = memory.getHistory(sessionId);
+        StringBuilder answer = new StringBuilder();
+
         Flux<String> flux = client.prompt()
                 .system(system)
+                .messages(history)
                 .user(question)
                 .stream()
                 .content();
 
         flux.subscribeOn(Schedulers.boundedElastic())
                 .subscribe(
-                        chunk -> send(emitter, "chunk", chunk),
+                        chunk -> {
+                            answer.append(chunk);
+                            send(emitter, "chunk", chunk);
+                        },
                         err -> {
                             log.error("[AI] RAG 流式生成失败, model={}", model.getId(), err);
                             send(emitter, "error", String.valueOf(err.getMessage()));
                             emitter.completeWithError(err);
                         },
-                        () -> { send(emitter, "done", "[DONE]"); emitter.complete(); }
+                        () -> {
+                            memory.append(sessionId, question, answer.toString());
+                            send(emitter, "done", "[DONE]");
+                            emitter.complete();
+                        }
                 );
         emitter.onTimeout(emitter::complete);
         return emitter;

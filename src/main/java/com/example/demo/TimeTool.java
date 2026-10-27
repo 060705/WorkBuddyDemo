@@ -1,5 +1,6 @@
 package com.example.demo;
 
+import com.example.demo.agent.ToolTrace;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.stereotype.Component;
 
@@ -13,8 +14,16 @@ import java.time.format.DateTimeFormatter;
 @Component
 public class TimeTool {
 
+    private final ToolTrace trace;
+
+    public TimeTool(ToolTrace trace) {
+        this.trace = trace;
+    }
+
     @Tool(description = "获取当前服务器的日期和时间，当用户询问现在几点、今天几号、当前时间等时间相关问题时使用")
     public String getCurrentTime() {
-        return LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        String result = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        trace.record("getCurrentTime", "(无参数)", result);
+        return result;
     }
 }

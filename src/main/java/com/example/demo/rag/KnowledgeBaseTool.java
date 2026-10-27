@@ -1,5 +1,6 @@
 package com.example.demo.rag;
 
+import com.example.demo.agent.ToolTrace;
 import org.springframework.stereotype.Component;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
@@ -20,9 +21,11 @@ import java.util.stream.Collectors;
 public class KnowledgeBaseTool {
 
     private final VectorStoreService store;
+    private final ToolTrace trace;
 
-    public KnowledgeBaseTool(VectorStoreService store) {
+    public KnowledgeBaseTool(VectorStoreService store, ToolTrace trace) {
         this.store = store;
+        this.trace = trace;
     }
 
     /** 暴露底层向量库，供 Controller 直接检索（用于 /ai/rag 标注参考片段） */
@@ -44,12 +47,16 @@ public class KnowledgeBaseTool {
 
         int k = (topK == null || topK <= 0) ? 5 : topK;
         if (store.size() == 0) {
+            trace.record("search", "query=" + query, "(知识库为空)");
             return "（知识库当前为空，没有可检索的资料）";
         }
         List<VectorStoreService.Hit> hits = store.search(query, k);
-        return hits.stream()
+        String result = hits.stream()
                 .map(h -> String.format("【出处：%s｜相关度 %.2f】\n%s",
                         h.chunk.source, h.score, h.chunk.text))
                 .collect(Collectors.joining("\n\n---\n\n"));
+        trace.record("search", "query=" + query + ", topK=" + k,
+                "命中 " + hits.size() + " 条");
+        return result;
     }
 }
