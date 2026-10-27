@@ -42,10 +42,8 @@ spring:
         api-key: ${DASHSCOPE_API_KEY:${QWEN_API_KEY:}}
       deepseek:                                      # DeepSeek 官方
         api-key: ${DEEPSEEK_API_KEY:}
-      openai:                                        # OpenAI 官方
-        api-key: ${OPENAI_API_KEY:}
-      ollama:                                        # 本地 Ollama，无需 Key
-        base-url: http://localhost:11434
+      chatanywhere:                                  # ChatAnywhere 聚合转发（一个 Key 接多家模型）
+        api-key: ${CHATANYWHERE_API_KEY:}
 server:
   port: 8080
 management:

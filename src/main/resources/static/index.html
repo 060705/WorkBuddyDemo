@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Agent · 多模型流式演示</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh; padding: 24px; color: #333;
+        }
+        .wrap { max-width: 880px; margin: 0 auto; }
+        .card {
+            background: #fff; border-radius: 14px; padding: 22px;
+            box-shadow: 0 10px 30px rgba(0,0,0,.15); margin-bottom: 18px;
+        }
+        h1 { font-size: 20px; color: #4a3f8c; margin-bottom: 4px; }
+        .sub { font-size: 12px; color: #999; margin-bottom: 18px; }
+        label { font-size: 13px; font-weight: 600; color: #555; display: block; margin: 12px 0 6px; }
+        select, textarea {
+            width: 100%; border: 1px solid #ddd; border-radius: 8px;
+            padding: 10px 12px; font-size: 14px; font-family: inherit; outline: none;
+        }
+        select:focus, textarea:focus { border-color: #764ba2; }
+        textarea { resize: vertical; min-height: 72px; }
+        .btn {
+            margin-top: 14px; width: 100%; padding: 12px; border: none; border-radius: 8px;
+            background: linear-gradient(135deg, #667eea, #764ba2); color: #fff;
+            font-size: 15px; font-weight: 600; cursor: pointer; transition: opacity .2s;
+        }
+        .btn:hover { opacity: .9; }
+        .btn:disabled { opacity: .5; cursor: not-allowed; }
+        .meta {
+            display: none; font-size: 12px; color: #764ba2; background: #f3f0fb;
+            border-radius: 6px; padding: 6px 10px; margin-bottom: 12px;
+        }
+        .meta.show { display: inline-block; }
+        #out {
+            min-height: 120px; font-size: 14.5px; line-height: 1.8; white-space: pre-wrap;
+            word-break: break-word; color: #2c2c2c;
+        }
+        #out .cursor { display: inline-block; width: 8px; height: 16px; background: #764ba2;
+            vertical-align: -2px; animation: blink 1s step-start infinite; }
+        @keyframes blink { 50% { opacity: 0; } }
+        .placeholder { color: #bbb; }
+        code { background: #f0eef8; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+        strong { color: #4a3f8c; }
+        .tip { font-size: 12px; color: #aaa; margin-top: 10px; text-align: center; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="card">
+        <h1>🤖 AI Agent · 多模型多供应商流式演示</h1>
+        <div class="sub">Spring AI + SSE · 选模型 → 输入问题 → 逐字流式输出</div>
+
+        <label>选择模型（modelId）</label>
+        <select id="model"></select>
+
+        <label>你的问题</label>
+        <textarea id="q" placeholder="例如：现在几点了？帮我用一句话介绍什么是 RAG"></textarea>
+
+        <button class="btn" id="send">发送（流式生成）</button>
+    </div>
+
+    <div class="card">
+        <span class="meta" id="meta"></span>
+        <div id="out"><span class="placeholder">回答会在这里逐字流式出现…</span></div>
+        <div class="tip">工具调用演示：问「现在几点」模型会自动调用后端 TimeTool 返回真实时间</div>
+    </div>
+</div>
+
+<script>
+    const modelSel = document.getElementById('model');
+    const qEl = document.getElementById('q');
+    const outEl = document.getElementById('out');
+    const metaEl = document.getElementById('meta');
+    const sendBtn = document.getElementById('send');
+    let es = null;
+
+    // 加载模型清单
+    fetch('/ai/models').then(r => r.json()).then(d => {
+        d.models.forEach(m => {
+            const o = document.createElement('option');
+            o.value = m.id;
+            o.textContent = `${m.id}（${m.model} · ${m.provider}）`;
+            if (m.default) o.selected = true;
+            modelSel.appendChild(o);
+        });
+    });
+
+    // 极简 markdown 渲染：加粗 / 行内代码 / 换行
+    function md(t) {
+        let h = t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+        h = h.replace(/^#{1,6}\s*(.+)$/gm, '<strong>$1</strong>');
+        return h.replace(/\n/g, '<br>');
+    }
+
+    function setContent(text, streaming) {
+        outEl.innerHTML = md(text) + (streaming ? '<span class="cursor"></span>' : '');
+    }
+
+    function ask() {
+        const message = qEl.value.trim();
+        if (!message) { qEl.focus(); return; }
+        if (es) es.close();
+
+        sendBtn.disabled = true;
+        metaEl.classList.remove('show');
+        let content = '';
+        setContent('', true);
+
+        const url = '/ai/stream?modelId=' + encodeURIComponent(modelSel.value)
+                  + '&message=' + encodeURIComponent(message);
+        es = new EventSource(url);
+
+        es.addEventListener('meta', e => {
+            metaEl.textContent = '⚙️ ' + e.data;
+            metaEl.classList.add('show');
+        });
+        es.addEventListener('chunk', e => {
+            content += e.data;
+            setContent(content, true);
+        });
+        es.addEventListener('done', () => {
+            setContent(content, false);
+            es.close(); sendBtn.disabled = false;
+        });
+        es.addEventListener('error', e => {
+            setContent(content + '\n[错误] ' + (e.data || '连接中断'), false);
+            es.close(); sendBtn.disabled = false;
+        });
+        es.onerror = () => { es.close(); sendBtn.disabled = false; };
+    }
+
+    sendBtn.addEventListener('click', ask);
+    qEl.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) ask();
+    });
+</script>
+</body>
+</html>

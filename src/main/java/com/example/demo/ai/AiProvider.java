@@ -23,17 +23,9 @@ public enum AiProvider {
     DEEPSEEK("deepseek", "DeepSeek 官方",
             "https://api.deepseek.com", "DEEPSEEK_API_KEY"),
 
-    /** OpenAI 官方 */
-    OPENAI("openai", "OpenAI 官方",
-            "https://api.openai.com", "OPENAI_API_KEY"),
-
-    /** 本地 Ollama（OpenAI 兼容端点，无需 Key） */
-    OLLAMA("ollama", "本地 Ollama（localhost:11434）",
-            "http://localhost:11434", null),
-
-    /** CHATANYWHERE（OpenAI 兼容端点，无需 Key） */
-    CHATANYWHERE("ollama", "CHATANYWHERE",
-            "https://api.chatanywhere.tech", null);
+    /** ChatAnywhere 聚合转发：一个 Key 接 OpenAI/Claude/Gemini/DeepSeek/Qwen/GLM/Kimi/MiniMax */
+    CHATANYWHERE("chatanywhere", "ChatAnywhere 聚合转发",
+            "https://api.chatanywhere.tech", "CHATANYWHERE_API_KEY");
 
     /** 供应商唯一编码，用于 ai.providers.<code> 配置定位 */
     private final String code;

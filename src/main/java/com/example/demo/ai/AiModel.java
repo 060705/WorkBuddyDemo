@@ -33,13 +33,23 @@ public enum AiModel {
     DEEPSEEK_REASONER("deepseek-reasoner", AiProvider.DEEPSEEK, "deepseek-reasoner",
             "DeepSeek R1 推理模型（慢但强）"),
 
-    // ==================== OpenAI 官方 ====================
-    OPENAI_GPT4O_MINI("openai-gpt4o-mini", AiProvider.OPENAI, "gpt-4o-mini",
-            "GPT-4o mini，便宜好用"),
-
-    // ==================== 本地 Ollama（无需 Key）====================
-    OLLAMA_QWEN25_7B("ollama-qwen25-7b", AiProvider.OLLAMA, "qwen2.5:7b",
-            "本地 Qwen2.5 7B，需先 ollama pull qwen2.5:7b");
+    // ==================== ChatAnywhere 聚合转发（免费 Key 只能用免费目录内的模型）====================
+    CA_GPT4O_MINI("ca-gpt4o-mini", AiProvider.CHATANYWHERE, "gpt-4o-mini",
+            "ChatAnywhere · GPT-4o mini，便宜好用（免费可用）"),
+    CA_GPT4O("ca-gpt4o", AiProvider.CHATANYWHERE, "gpt-4o",
+            "ChatAnywhere · GPT-4o，综合能力强（免费可用）"),
+    CA_GPT41_MINI("ca-gpt41-mini", AiProvider.CHATANYWHERE, "gpt-4.1-mini",
+            "ChatAnywhere · GPT-4.1 mini（免费可用）"),
+    CA_GPT41("ca-gpt41", AiProvider.CHATANYWHERE, "gpt-4.1",
+            "ChatAnywhere · GPT-4.1（免费可用）"),
+    CA_GPT56_SOL("ca-gpt56-sol", AiProvider.CHATANYWHERE, "gpt-5.6-sol",
+            "ChatAnywhere · GPT-5.6 Sol（免费可用，旗舰）"),
+    CA_DEEPSEEK_CHAT("ca-deepseek-chat", AiProvider.CHATANYWHERE, "deepseek-chat",
+            "ChatAnywhere · DeepSeek V3（免费可用）"),
+    CA_DEEPSEEK_V32("ca-deepseek-v32", AiProvider.CHATANYWHERE, "deepseek-v3.2",
+            "ChatAnywhere · DeepSeek V3.2（免费可用）"),
+    CA_DEEPSEEK_V4_FLASH("ca-deepseek-v4-flash", AiProvider.CHATANYWHERE, "deepseek-v4-flash",
+            "ChatAnywhere · DeepSeek V4 Flash（免费可用）");
 
     /** 全局唯一 id，入参就传这个 */
     private final String id;
